@@ -3,10 +3,13 @@ on:
   push:
     branches: [orqiflow-edit-sync]
   workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
 jobs:
   test-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -16,3 +19,15 @@ jobs:
       - run: go test ./pkg/whatsmeow/service/...
       - run: go vet ./pkg/whatsmeow/service/...
       - run: go build -o /tmp/evolution-go ./cmd/evolution-go
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/tourviewidecoes/evolution-go:orqiflow-edit-sync
+          build-args: |
+            VERSION=0.7.2-orqiflow-edit-sync
