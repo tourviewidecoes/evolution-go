@@ -1,0 +1,18 @@
+﻿name: OrQiFlow Evolution edit patch
+on:
+  push:
+    branches: [orqiflow-edit-sync]
+  workflow_dispatch:
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: true
+      - run: go test ./pkg/whatsmeow/service/...
+      - run: go vet ./pkg/whatsmeow/service/...
+      - run: go build -o /tmp/evolution-go ./cmd/evolution-go
