@@ -1236,7 +1236,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			}()
 		}
 
-		parsedMessageType := utils.GetMessageType(evt.Message)
+		// Edits arrive sealed in a secretEncryptedMessage envelope. Unwrap before typing the\n		// message, so it is classified as "edit" and the webhook carries the new text.\n		mycli.unwrapSecretEncryptedEdit(evt)\n\n		parsedMessageType := utils.GetMessageType(evt.Message)
 		if parsedMessageType == "ignore" || strings.HasPrefix(parsedMessageType, "unknown_protocol_") {
 			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Message ignored because it's a unknown protocol message", mycli.userID)
 			return
