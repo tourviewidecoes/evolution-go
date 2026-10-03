@@ -33,20 +33,36 @@ func secretEncryptedEdit(message *waE2E.Message) *waE2E.SecretEncryptedMessage {
 // decrypted edit needs no new contract downstream. Returns nil when there is nothing to
 // rebuild, letting callers keep the original envelope.
 func buildEditProtocolMessage(target *waCommon.MessageKey, decrypted *waE2E.Message, timestampMS int64) *waE2E.Message {
-	if target == nil || decrypted == nil {
+	if decrypted == nil {
 		return nil
 	}
 
+	// Current whatsmeow already returns the complete ProtocolMessage{MESSAGE_EDIT}
+	// from DecryptSecretEncryptedMessage. Preserve that shape as-is instead of
+	// nesting a protocol message inside EditedMessage, which hides the edited text.
+	if existing := decrypted.GetProtocolMessage(); existing != nil && existing.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT {
+		if existing.GetKey() == nil && target != nil {
+			existing.Key = target
+		}
+		if existing.TimestampMS == nil && timestampMS > 0 {
+			existing.TimestampMS = proto.Int64(timestampMS)
+		}
+		return decrypted
+	}
+
+	// Compatibility fallback for whatsmeow variants that return only the edited
+	// plaintext message rather than the complete protocol envelope.
+	if target == nil {
+		return nil
+	}
 	protocolMessage := &waE2E.ProtocolMessage{
 		Key:           target,
 		Type:          waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
 		EditedMessage: decrypted,
 	}
-
 	if timestampMS > 0 {
 		protocolMessage.TimestampMS = proto.Int64(timestampMS)
 	}
-
 	return &waE2E.Message{ProtocolMessage: protocolMessage}
 }
 

@@ -69,6 +69,30 @@ func TestBuildEditProtocolMessageRestoresPlaintextShape(t *testing.T) {
 	}
 }
 
+
+func TestBuildEditProtocolMessagePreservesAlreadyDecryptedProtocol(t *testing.T) {
+	decrypted := &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+		Type: waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
+		Key:  &waCommon.MessageKey{ID: stringPtr("ORIGINAL_ID")},
+		EditedMessage: &waE2E.Message{Conversation: stringPtr("Teste 1")},
+	}}
+
+	rebuilt := buildEditProtocolMessage(&waCommon.MessageKey{ID: stringPtr("FALLBACK_ID")}, decrypted, 1754216820000)
+	if rebuilt != decrypted {
+		t.Fatal("expected already decrypted protocol message to be preserved")
+	}
+	pm := rebuilt.GetProtocolMessage()
+	if pm.GetKey().GetID() != "ORIGINAL_ID" {
+		t.Fatalf("expected original target id, got %q", pm.GetKey().GetID())
+	}
+	if pm.GetEditedMessage().GetConversation() != "Teste 1" {
+		t.Fatalf("expected edited text to remain directly accessible, got %q", pm.GetEditedMessage().GetConversation())
+	}
+	if pm.GetEditedMessage().GetProtocolMessage() != nil {
+		t.Fatal("must not nest ProtocolMessage inside EditedMessage")
+	}
+}
+
 func TestBuildEditProtocolMessageOmitsUnknownTimestamp(t *testing.T) {
 	rebuilt := buildEditProtocolMessage(
 		&waCommon.MessageKey{ID: stringPtr("ORIGINAL_ID")},
