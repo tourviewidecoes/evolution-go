@@ -336,6 +336,11 @@ func (u *userService) GetAvatar(data *GetAvatarStruct, instance *instance_model.
 		return nil, errors.New("invalid phone number")
 	}
 
+	// Profile-picture IQs require the canonical WhatsApp user JID (digits only).
+	// CreateJID intentionally keeps a leading + for some send/check flows, so strip
+	// it here before GetProfilePictureInfo. Group JIDs are unchanged.
+	jid = utils.CanonicalJID(jid)
+
 	u.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Requesting avatar for JID: %s, Preview: %v", instance.Id, jid, data.Preview)
 
 	var pic *types.ProfilePictureInfo
