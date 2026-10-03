@@ -1135,6 +1135,13 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.Message:
 		doWebhook = true
 		postMap["event"] = "Message"
+
+		// Secret-encrypted edits must be decrypted before any Sender/Chat JID
+		// normalization mutates evt.Info. DecryptSecretEncryptedMessage uses the
+		// original WhatsApp event context; changing LID/PN identities first can
+		// make a valid edit arrive downstream as an empty normal message.
+		mycli.unwrapSecretEncryptedEdit(evt)
+
 		// Message received
 
 		// Log message arrival with detailed info
@@ -1235,10 +1242,6 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				}
 			}()
 		}
-
-		// Edits arrive sealed in a secretEncryptedMessage envelope. Unwrap before typing the
-		// message, so it is classified as "edit" and the webhook carries the new text.
-		mycli.unwrapSecretEncryptedEdit(evt)
 
 		parsedMessageType := utils.GetMessageType(evt.Message)
 		if parsedMessageType == "ignore" || strings.HasPrefix(parsedMessageType, "unknown_protocol_") {
