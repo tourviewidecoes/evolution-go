@@ -13,9 +13,12 @@ import (
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
 )
 
+const webhookRequestTimeout = 45 * time.Second
+
 type webhookProducer struct {
 	url           string
 	loggerWrapper *logger_wrapper.LoggerManager
+	client        *http.Client
 }
 
 func NewWebhookProducer(
@@ -25,6 +28,7 @@ func NewWebhookProducer(
 	return &webhookProducer{
 		url:           url,
 		loggerWrapper: loggerWrapper,
+		client:        &http.Client{Timeout: webhookRequestTimeout},
 	}
 }
 
@@ -72,7 +76,10 @@ func (p *webhookProducer) sendWebhook(url string, body []byte, userID string) (e
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
+	client := p.client
+	if client == nil {
+		client = &http.Client{Timeout: webhookRequestTimeout}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err, nil, 0
