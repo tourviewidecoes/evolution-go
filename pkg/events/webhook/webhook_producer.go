@@ -13,7 +13,7 @@ import (
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
 )
 
-const webhookRequestTimeout = 45 * time.Second
+const (\n\twebhookRequestTimeout = 45 * time.Second\n\twebhookMaxRetryInterval = 2 * time.Minute\n)
 
 type webhookProducer struct {
 	url           string
@@ -54,6 +54,27 @@ func (p *webhookProducer) Produce(
 	return nil
 }
 
+func webhookRetryDelay(initial time.Duration, failedAttempt int) time.Duration {
+	if initial <= 0 {
+		return 0
+	}
+	if failedAttempt < 1 {
+		failedAttempt = 1
+	}
+
+	delay := initial
+	for attempt := 1; attempt < failedAttempt; attempt++ {
+		if delay >= webhookMaxRetryInterval/2 {
+			return webhookMaxRetryInterval
+		}
+		delay *= 2
+	}
+	if delay > webhookMaxRetryInterval {
+		return webhookMaxRetryInterval
+	}
+	return delay
+}
+
 func (p *webhookProducer) sendWebhookWithRetry(url string, body []byte, maxRetries int, retryInterval time.Duration, userID string) {
 	for i := 0; i < maxRetries; i++ {
 		err, responseBody, statusCode := p.sendWebhook(url, body, userID)
@@ -61,9 +82,16 @@ func (p *webhookProducer) sendWebhookWithRetry(url string, body []byte, maxRetri
 			p.loggerWrapper.GetLogger(userID).LogInfo("[%s] webhook sent successfully - url: %s, status: %d, response: %s", userID, url, statusCode, string(responseBody))
 			return
 		}
-		p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook failed - url: %s, attempt: %d, error: %v", userID, url, i+1, err)
 
-		time.Sleep(retryInterval)
+		attempt := i + 1
+		if attempt >= maxRetries {
+			p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook failed - url: %s, attempt: %d, error: %v", userID, url, attempt, err)
+			break
+		}
+
+		delay := webhookRetryDelay(retryInterval, attempt)
+		p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook failed - url: %s, attempt: %d, retry_in: %s, error: %v", userID, url, attempt, delay, err)
+		time.Sleep(delay)
 	}
 	p.loggerWrapper.GetLogger(userID).LogError("[%s] webhook failed after maximum retries - url: %s", userID, url)
 }
