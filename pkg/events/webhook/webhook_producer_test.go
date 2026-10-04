@@ -43,3 +43,28 @@ func TestSendWebhookHonorsClientTimeout(t *testing.T) {
 		t.Fatalf("request timeout was not bounded: %s", elapsed)
 	}
 }
+
+func TestWebhookRetryDelayUsesExponentialBackoffWithCap(t *testing.T) {
+	tests := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{attempt: 1, want: 30 * time.Second},
+		{attempt: 2, want: 60 * time.Second},
+		{attempt: 3, want: 2 * time.Minute},
+		{attempt: 4, want: 2 * time.Minute},
+		{attempt: 8, want: 2 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		if got := webhookRetryDelay(30*time.Second, tt.attempt); got != tt.want {
+			t.Fatalf("attempt %d: expected %s, got %s", tt.attempt, tt.want, got)
+		}
+	}
+}
+
+func TestWebhookRetryDelayHandlesNonPositiveInput(t *testing.T) {
+	if got := webhookRetryDelay(0, 1); got != 0 {
+		t.Fatalf("expected zero delay, got %s", got)
+	}
+}
