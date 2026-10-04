@@ -13,7 +13,10 @@ import (
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
 )
 
-const (\n\twebhookRequestTimeout = 45 * time.Second\n\twebhookMaxRetryInterval = 2 * time.Minute\n)
+const (
+	webhookRequestTimeout   = 45 * time.Second
+	webhookMaxRetryInterval = 2 * time.Minute
+)
 
 type webhookProducer struct {
 	url           string
