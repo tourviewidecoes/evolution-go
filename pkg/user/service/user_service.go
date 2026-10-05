@@ -315,6 +315,14 @@ func (u *userService) mergeCheckUserResults(original, retry *CheckUserCollection
 	return merged
 }
 
+func avatarLookupJID(number string) (types.JID, error) {
+	jid, ok := utils.ParseJID(number)
+	if !ok {
+		return types.JID{}, errors.New("invalid phone number")
+	}
+	return utils.CanonicalJID(jid), nil
+}
+
 func (u *userService) GetAvatar(data *GetAvatarStruct, instance *instance_model.Instance) (*types.ProfilePictureInfo, error) {
 	client, err := u.ensureClientConnected(instance.Id)
 	if err != nil {
@@ -331,9 +339,9 @@ func (u *userService) GetAvatar(data *GetAvatarStruct, instance *instance_model.
 		return nil, errors.New("client is not logged in to WhatsApp")
 	}
 
-	jid, ok := utils.ParseJID(data.Number)
-	if !ok {
-		return nil, errors.New("invalid phone number")
+	jid, err := avatarLookupJID(data.Number)
+	if err != nil {
+		return nil, err
 	}
 
 	u.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Requesting avatar for JID: %s, Preview: %v", instance.Id, jid, data.Preview)
