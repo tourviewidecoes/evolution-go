@@ -14,9 +14,17 @@ import (
 )
 
 const (
-	webhookRequestTimeout   = 45 * time.Second
-	webhookMaxRetryInterval = 2 * time.Minute
+	webhookRequestTimeout      = 45 * time.Second
+	webhookMaxRetryInterval    = 2 * time.Minute
+	webhookMaxConcurrentSends  = 4
 )
+
+// Backpressure global por processo. Em degradação do receptor, cada evento
+// costumava abrir uma goroutine HTTP sem limite; bursts + retries podiam manter
+// dezenas de requests simultâneos e amplificar a saturação do backend receptor.
+// A fila fica no processo Evolution e preserva os eventos/retries, mas somente
+// um número pequeno de POSTs pode estar em voo ao mesmo tempo.
+var webhookSendSlots = make(chan struct{}, webhookMaxConcurrentSends)
 
 type webhookProducer struct {
 	url           string
@@ -100,6 +108,9 @@ func (p *webhookProducer) sendWebhookWithRetry(url string, body []byte, maxRetri
 }
 
 func (p *webhookProducer) sendWebhook(url string, body []byte, userID string) (error, []byte, int) {
+	webhookSendSlots <- struct{}{}
+	defer func() { <-webhookSendSlots }()
+
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
 		return err, nil, 0

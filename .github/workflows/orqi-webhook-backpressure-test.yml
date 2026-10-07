@@ -1,0 +1,25 @@
+name: OrQi Webhook Backpressure Test
+
+on:
+  pull_request:
+    paths:
+      - 'pkg/events/webhook/**'
+      - '.github/workflows/orqi-webhook-backpressure-test.yml'
+  push:
+    branches:
+      - fix/orqi-prod-webhook-backpressure-20261007
+    paths:
+      - 'pkg/events/webhook/**'
+      - '.github/workflows/orqi-webhook-backpressure-test.yml'
+
+jobs:
+  webhook-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./pkg/events/webhook -count=1
