@@ -2373,7 +2373,16 @@ func (w whatsmeowService) StartInstance(instanceId string) error {
 
 	var subscribedEvents []string
 
-	if len(eventArray) < 1 {
+	if strings.EqualFold(w.config.ClientName, "orqiflow") {
+		subscribedEvents = event_types.OrQiFlowRuntimeEvents()
+		normalizedEvents := strings.Join(subscribedEvents, ",")
+		if instance.Events != normalizedEvents {
+			instance.Events = normalizedEvents
+			if err := w.instanceRepository.Update(instance); err != nil {
+				w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to persist normalized OrQiFlow event scope: %v", instanceId, err)
+			}
+		}
+	} else if len(eventArray) < 1 {
 		subscribedEvents = append(subscribedEvents, event_types.MESSAGE)
 	} else {
 		for _, arg := range eventArray {
@@ -2706,7 +2715,16 @@ func (w whatsmeowService) UpdateInstanceSettings(instanceId string) error {
 	eventArray := strings.Split(instance.Events, ",")
 	var subscribedEvents []string
 
-	if len(eventArray) < 1 {
+	if strings.EqualFold(w.config.ClientName, "orqiflow") {
+		subscribedEvents = event_types.OrQiFlowRuntimeEvents()
+		normalizedEvents := strings.Join(subscribedEvents, ",")
+		if instance.Events != normalizedEvents {
+			instance.Events = normalizedEvents
+			if err := w.instanceRepository.Update(instance); err != nil {
+				w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to normalize OrQiFlow event scope: %v", instanceId, err)
+			}
+		}
+	} else if len(eventArray) < 1 {
 		subscribedEvents = append(subscribedEvents, event_types.MESSAGE)
 	} else {
 		for _, arg := range eventArray {
