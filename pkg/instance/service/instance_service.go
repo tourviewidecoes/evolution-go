@@ -211,7 +211,11 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 
 	i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Processing subscribe events: %v", instance.Id, data.Subscribe)
 
-	if len(data.Subscribe) == 0 {
+	if strings.EqualFold(i.config.ClientName, "orqiflow") {
+		// OrQiFlow only consumes this bounded event set. Never let legacy ALL
+		// subscriptions re-enable presence/history/contact storms.
+		subscribedEvents = event_types.OrQiFlowRuntimeEvents()
+	} else if len(data.Subscribe) == 0 {
 		subscribedEvents = append(subscribedEvents, event_types.MESSAGE)
 	} else if len(data.Subscribe) > 0 && data.Subscribe[0] == "ALL" {
 		for _, event := range event_types.AllEventTypes {
