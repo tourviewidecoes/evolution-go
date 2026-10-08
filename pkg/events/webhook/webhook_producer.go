@@ -7,15 +7,33 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	producer_interfaces "github.com/evolution-foundation/evolution-go/pkg/events/interfaces"
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
 )
 
+const (
+	maxWebhookRetries       = 3
+	webhookRequestTimeout   = 8 * time.Second
+	webhookCircuitThreshold = 3
+	webhookCircuitCooldown  = 60 * time.Second
+	webhookWorkers          = 8
+)
+
+type circuitState struct {
+	failures  int
+	openUntil time.Time
+}
+
 type webhookProducer struct {
 	url           string
 	loggerWrapper *logger_wrapper.LoggerManager
+	client        *http.Client
+	slots         chan struct{}
+	mu            sync.Mutex
+	circuits      map[string]circuitState
 }
 
 func NewWebhookProducer(
@@ -25,6 +43,9 @@ func NewWebhookProducer(
 	return &webhookProducer{
 		url:           url,
 		loggerWrapper: loggerWrapper,
+		client:        &http.Client{Timeout: webhookRequestTimeout},
+		slots:         make(chan struct{}, webhookWorkers),
+		circuits:      make(map[string]circuitState),
 	}
 }
 
@@ -40,48 +61,117 @@ func (p *webhookProducer) Produce(
 		return nil
 	}
 
-	if p.url != "" {
-		go p.sendWebhookWithRetry(p.url, payload, 5, 30*time.Second, userID)
-	}
-	if webhookUrl != "" {
-		go p.sendWebhookWithRetry(webhookUrl, payload, 5, 30*time.Second, userID)
+	for _, target := range []string{p.url, webhookUrl} {
+		if target == "" || !p.allowTarget(target) {
+			continue
+		}
+
+		// Backpressure: never create an unbounded number of retry goroutines.
+		// WhatsApp messages are persisted before fan-out, so when the delivery
+		// layer is saturated we protect the process/Supabase and let recovery
+		// reconcile instead of amplifying an outage.
+		select {
+		case p.slots <- struct{}{}:
+			go func(url string) {
+				defer func() { <-p.slots }()
+				p.sendWebhookWithRetry(url, payload, userID)
+			}(target)
+		default:
+			p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook delivery saturated; dropping fan-out attempt for url: %s", userID, target)
+		}
 	}
 
 	return nil
 }
 
-func (p *webhookProducer) sendWebhookWithRetry(url string, body []byte, maxRetries int, retryInterval time.Duration, userID string) {
-	for i := 0; i < maxRetries; i++ {
-		err, responseBody, statusCode := p.sendWebhook(url, body, userID)
+func (p *webhookProducer) allowTarget(url string) bool {
+	now := time.Now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	state := p.circuits[url]
+	if state.openUntil.After(now) {
+		return false
+	}
+	if !state.openUntil.IsZero() {
+		state.openUntil = time.Time{}
+		state.failures = 0
+		p.circuits[url] = state
+	}
+	return true
+}
+
+func (p *webhookProducer) recordSuccess(url string) {
+	p.mu.Lock()
+	delete(p.circuits, url)
+	p.mu.Unlock()
+}
+
+func (p *webhookProducer) recordFailure(url string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	state := p.circuits[url]
+	state.failures++
+	if state.failures >= webhookCircuitThreshold {
+		state.openUntil = time.Now().Add(webhookCircuitCooldown)
+		state.failures = 0
+	}
+	p.circuits[url] = state
+}
+
+func isRetryableWebhookStatus(statusCode int) bool {
+	return statusCode == 0 || statusCode == http.StatusRequestTimeout || statusCode == http.StatusTooManyRequests || statusCode >= 500
+}
+
+func (p *webhookProducer) sendWebhookWithRetry(url string, body []byte, userID string) {
+	backoff := time.Second
+
+	for attempt := 1; attempt <= maxWebhookRetries; attempt++ {
+		err, responseBody, statusCode := p.sendWebhook(url, body)
 		if err == nil {
+			p.recordSuccess(url)
 			p.loggerWrapper.GetLogger(userID).LogInfo("[%s] webhook sent successfully - url: %s, status: %d, response: %s", userID, url, statusCode, string(responseBody))
 			return
 		}
-		p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook failed - url: %s, attempt: %d, error: %v", userID, url, i+1, err)
 
-		time.Sleep(retryInterval)
+		if !isRetryableWebhookStatus(statusCode) {
+			// 4xx other than 408/429 are permanent for this payload/config.
+			// Retrying them only multiplies load and cannot make them succeed.
+			p.recordFailure(url)
+			p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook permanent failure - url: %s, status: %d, error: %v", userID, url, statusCode, err)
+			return
+		}
+
+		p.recordFailure(url)
+		p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook transient failure - url: %s, attempt: %d/%d, status: %d, error: %v", userID, url, attempt, maxWebhookRetries, statusCode, err)
+
+		if !p.allowTarget(url) || attempt == maxWebhookRetries {
+			return
+		}
+
+		time.Sleep(backoff)
+		backoff *= 2
 	}
-	p.loggerWrapper.GetLogger(userID).LogError("[%s] webhook failed after maximum retries - url: %s", userID, url)
 }
 
-func (p *webhookProducer) sendWebhook(url string, body []byte, userID string) (error, []byte, int) {
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+func (p *webhookProducer) sendWebhook(url string, body []byte) (error, []byte, int) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(body))
 	if err != nil {
 		return err, nil, 0
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return err, nil, 0
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
-		return fmt.Errorf("erro ao ler resposta: %v", err), nil, 0
+		return fmt.Errorf("erro ao ler resposta: %v", err), nil, resp.StatusCode
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
