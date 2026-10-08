@@ -62,3 +62,7 @@ var validEventTypes = map[string]bool{
 func IsEventType(eventType string) bool {
 	return validEventTypes[eventType]
 }
+
+func OrQiFlowRuntimeEvents() []string {
+	return []string{MESSAGE, SEND_MESSAGE, READ_RECEIPT, CONNECTION, GROUP}
+}
