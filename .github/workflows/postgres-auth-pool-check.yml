@@ -1,0 +1,36 @@
+name: Evolution PostgreSQL Auth Pool Regression
+
+on:
+  pull_request:
+    paths:
+      - 'pkg/whatsmeow/service/whatsmeow.go'
+      - 'cmd/evolution-go/main.go'
+      - '.github/workflows/postgres-auth-pool-check.yml'
+
+jobs:
+  auth-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prevent per-session unbounded SQL pools
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('pkg/whatsmeow/service/whatsmeow.go').read_text()
+          startup = Path('cmd/evolution-go/main.go').read_text()
+          assert 'sqlstore.New(context.Background(), "postgres"' not in src, "Do not open one PostgreSQL DB pool per instance"
+          assert src.count('sqlstore.NewWithDB(w.authDB, "postgres"') == 2, "Debug and standard paths must use the same bounded AUTH pool"
+          assert src.count('container.Upgrade(context.Background())') >= 2, "Keep whatsmeow schema upgrades after wrapping the existing pool"
+          assert 'db.SetMaxOpenConns(25)' in startup, "Shared AUTH pool must remain bounded"
+          assert 'defer authDB.Close()' in startup, "AUTH pool must close on app shutdown"
+          print('AUTH PostgreSQL pool reuse regression passed')
+          PY
+      - name: Compile and run related Go tests
+        run: go test ./pkg/whatsmeow/service ./pkg/instance/service -count=1
