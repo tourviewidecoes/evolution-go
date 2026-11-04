@@ -416,6 +416,10 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
+	if version.Major != 0 && version.Minor != 0 && version.Patch != 0 {
+		store.SetWAVersion(store.WAVersionContainer{uint32(version.Major), uint32(version.Minor), uint32(version.Patch)})
+	}
+
 	// 🔒 FIX: Sempre criar logger, mesmo que WaDebug esteja vazio
 	// Usar "INFO" como nível mínimo para garantir que logs importantes apareçam
 	minLevel := w.config.WaDebug
@@ -2648,13 +2652,25 @@ func fetchWhatsAppWebVersion() (*clientVersion, error) {
 
 	resp, err := http.Get("https://web.whatsapp.com/sw.js")
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch WhatsApp Web version: %v", err)
+		cachedWebVersion = &clientVersion{
+			Major: 2,
+			Minor: 3000,
+			Patch: 1052938686,
+		}
+		cachedWebVersionAt = time.Now()
+		return cachedWebVersion, nil
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
+		cachedWebVersion = &clientVersion{
+			Major: 2,
+			Minor: 3000,
+			Patch: 1052938686,
+		}
+		cachedWebVersionAt = time.Now()
+		return cachedWebVersion, nil
 	}
 
 	content := string(body)
@@ -2665,6 +2681,8 @@ func fetchWhatsAppWebVersion() (*clientVersion, error) {
 		`\\"client_revision\\":\s*(\d+)`,          // Formato escaped
 		`client_revision\\?\\"?:[\s]*(\d+)`,       // Formato mais flexível
 		`["']client_revision["'][\s]*:[\s]*(\d+)`, // Com aspas variadas
+		`["']app_version["']\s*:\s*["'][^"']*\((\d+)\)["']`,
+		`app_version[^\(]*\((\d+)\)`,
 	}
 
 	for _, pattern := range patterns {
@@ -2697,7 +2715,13 @@ func fetchWhatsAppWebVersion() (*clientVersion, error) {
 		content = content[:previewLength] + "..."
 	}
 
-	return nil, fmt.Errorf("could not find client revision in the fetched content. Content preview: %s", content)
+	cachedWebVersion = &clientVersion{
+		Major: 2,
+		Minor: 3000,
+		Patch: 1052938686,
+	}
+	cachedWebVersionAt = time.Now()
+	return cachedWebVersion, nil
 }
 
 func (w whatsmeowService) UpdateInstanceSettings(instanceId string) error {
