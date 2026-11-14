@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/image/webp"
@@ -129,6 +130,7 @@ type MyClient struct {
 	natsProducer       producer_interfaces.Producer
 	loggerWrapper      *logger_wrapper.LoggerManager
 	qrcodeCount        int
+	qrRotationActive   atomic.Bool
 	passkeyCeremony    *ceremony.Store
 }
 
@@ -723,7 +725,16 @@ func processPresenceUpdates(mycli *MyClient) {
 // the rotation/self-timer are new. Runs in its own goroutine so it never blocks
 // the whatsmeow event dispatch.
 func (mycli *MyClient) handleQRCodes(codes []string) {
+	// A reconnecting WhatsApp socket may dispatch the QR event again while
+	// an earlier batch is still rotating. Only one rotation per client can
+	// publish QR codes; otherwise the UI alternates invalid codes every few
+	// seconds and cannot pair.
+	if !mycli.qrRotationActive.CompareAndSwap(false, true) {
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Duplicate QR batch ignored while rotation is active", mycli.userID)
+		return
+	}
 	go func() {
+		defer mycli.qrRotationActive.Store(false)
 		instanceID := mycli.userID
 		for i, code := range codes {
 			// A successful pair (Store.ID set) or an in-flight passkey ceremony
@@ -731,7 +742,7 @@ func (mycli *MyClient) handleQRCodes(codes []string) {
 			// nil throughout a passkey ceremony (it is only set at PairSuccess),
 			// so we must also consult the ceremony store, otherwise a ceremony
 			// that outlasts QR rotation would have its socket/client torn down.
-			if mycli.WAClient == nil || mycli.WAClient.Store.ID != nil {
+			if mycli.WAClient == nil || !mycli.WAClient.IsConnected() || mycli.WAClient.Store.ID != nil {
 				return
 			}
 			if mycli.passkeyCeremony != nil && mycli.passkeyCeremony.HasActiveByInstance(instanceID) {
@@ -810,7 +821,7 @@ func (mycli *MyClient) handleQRCodes(codes []string) {
 		// Ran out of codes without a PairSuccess. Treat as QR timeout (mirrors
 		// GetQRChannel's "timeout") — UNLESS a passkey ceremony is in flight, in
 		// which case the socket must stay alive for the ceremony to complete.
-		if mycli.WAClient != nil && mycli.WAClient.Store.ID == nil {
+		if mycli.WAClient != nil && mycli.WAClient.IsConnected() && mycli.WAClient.Store.ID == nil {
 			if mycli.passkeyCeremony != nil && mycli.passkeyCeremony.HasActiveByInstance(instanceID) {
 				mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] QR codes exhausted but passkey ceremony active — keeping socket alive", instanceID)
 				return
