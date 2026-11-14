@@ -300,11 +300,9 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 }
 
 func (i instances) Reconnect(instance *instance_model.Instance) error {
-	_, err := i.ensureClientConnected(instance.Id)
-	if err != nil {
-		return err
-	}
-
+	// ReconnectClient itself starts the client. Calling ensureClientConnected
+	// first creates one socket only to tear it down immediately, which may
+	// leave competing QR rotations and make codes expire before scanning.
 	return i.whatsmeowService.ReconnectClient(instance.Id)
 }
 
